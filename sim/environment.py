@@ -36,6 +36,9 @@ class Environment:
         self.cfg = cfg
         self.n = cfg.n_agents
         self._gen = torch.Generator().manual_seed(seed)
+        # separate stream for held-out eval-outcome draws, so building the eval
+        # set never perturbs the training RNG stream (keeps runs reproducible).
+        self._eval_gen = torch.Generator().manual_seed(seed + 7777)
         if cfg.kind == "beta":
             self.alphas, self.betas = _resolve_beta_params(cfg, self.n)
         elif cfg.kind == "correlated":
@@ -74,8 +77,9 @@ class Environment:
         return (p + noise).clamp(1e-4, 1 - 1e-4)
 
     # -------------------------------------------------------------- outcomes
-    def sample_y(self, p: torch.Tensor) -> torch.Tensor:
-        u = torch.rand(p.shape, generator=self._gen)
+    def sample_y(self, p: torch.Tensor, gen: torch.Generator | None = None) -> torch.Tensor:
+        g = gen if gen is not None else self._gen
+        u = torch.rand(p.shape, generator=g)
         return (u < p).float()
 
     # ------------------------------------------------------------- batch API
@@ -90,8 +94,14 @@ class Environment:
         return p, z, y
 
     def eval_set(self, batch: int):
-        """Held-out eval triple (observation, true p, outcome), drawn once."""
+        """Held-out eval triple (observation, true p, outcome), drawn once.
+
+        ``p``/``z`` come from the main stream exactly as before (so the eval set
+        and the post-eval training stream are unchanged from the original code);
+        only the eval outcome ``y`` is drawn from the dedicated eval generator,
+        purely to feed the calibration metrics without disturbing training.
+        """
         p = self.sample_p(batch)
         z = self.observe(p)
-        y = self.sample_y(p)
+        y = self.sample_y(p, gen=self._eval_gen)
         return z, p, y

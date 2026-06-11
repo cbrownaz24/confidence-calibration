@@ -1,0 +1,6 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Local virtual environment (created for running the sim locally)
+.venv/

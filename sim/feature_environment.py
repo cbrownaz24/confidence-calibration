@@ -92,6 +92,9 @@ class FeatureEnvironment:
         # stream generator: drives x-sampling and outcome draws (per-algorithm
         # seeded, so all algorithms see the identical question/outcome stream).
         self._gen = torch.Generator().manual_seed(seed)
+        # separate stream for the held-out eval set, so evaluation never perturbs
+        # the training RNG stream.
+        self._eval_gen = torch.Generator().manual_seed(seed + 7777)
         # teacher generator: fixed across algorithms so the hidden difficulty
         # landscape itself never changes between runs.
         tgen = torch.Generator().manual_seed(cfg.teacher_seed)
@@ -143,6 +146,8 @@ class FeatureEnvironment:
 
         Returns (x_eval, p_eval, y_eval): the observation handed to ``ens.bids``,
         the true hidden probability target, and a fixed outcome draw for ECE.
+        Drawn entirely from the dedicated eval stream so it leaves the training
+        stream untouched (and is identical across algorithms).
         """
-        p, x, y = self._draw(batch, self._gen)
+        p, x, y = self._draw(batch, self._eval_gen)
         return x, p, y
