@@ -1,0 +1,81 @@
+% =============================================================================
+% Concise algorithm pseudocode for the confidence-calibration paper.
+% Drop this into main.tex with \input{tex/algorithms} (or paste the body).
+%
+% Requires in the preamble:
+%   \usepackage{amsmath}
+%   \usepackage{booktabs}
+%   \usepackage{algorithm}
+%   \usepackage{algpseudocode}
+%
+% Every algorithm shares the loop in Alg.~\ref{alg:loop}; they differ ONLY in the
+% per-agent rule (Table~\ref{tab:rules}). When a new algorithm is added to src/,
+% add one row to the table in the matching family block, in the same style.
+% =============================================================================
+
+\section{Algorithms}
+\label{sec:algorithms}
+
+All algorithms train $N$ independent agent networks against the same simulation
+and share the loop in Algorithm~\ref{alg:loop}; they differ only in the rule that
+turns a round's bids and outcomes into a per-agent loss (Table~\ref{tab:rules}).
+
+\begin{algorithm}[t]
+\caption{Shared training loop ($N$ independent agents, rule $R$)}
+\label{alg:loop}
+\begin{algorithmic}[1]
+\Require agent MLPs $M_1,\dots,M_N$; value distribution $F$; rule $R$; steps $T$
+\For{$t = 1,\dots,T$}
+  \State $(p_1,\dots,p_N)\sim F$;\quad $z_i \!=\! p_i$;\quad $y_i \sim \mathrm{Bernoulli}(p_i)$
+  \State $b_i \gets M_i(z_i)$ \Comment{deterministic; policy-gradient rules sample $b_i\!=\!\sigma(\mu_i(z_i)+\sigma_t\xi_i)$}
+  \State $(\ell_1,\dots,\ell_N) \gets R(b,p,y)$ \Comment{per-agent loss}
+  \State independently Adam-update each $M_i$ to minimize $\ell_i$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\noindent\textbf{Notation.} $s_i=\max_{j\ne i} b_j$ is the top competing bid; the
+soft win is $\rho_i(s)=\sigma\!\big((b_i-s_i)/\tau\big)$ and the counterfactual
+auction loss is $\ell^{\mathrm{cf}}_i(s)=-\rho_i(s)\,(y_i-s_i)$, whose optimum is
+truthful $b_i=p_i$. Policy-gradient rules use the REINFORCE surrogate
+$\ell_i=-A_i\log\pi_i(b_i)$ with reward $r_i$ and advantage $A_i$; $\bar r_i$ is a
+per-agent EMA baseline. The convergence plot reports
+$\mathrm{MAE}(t)=\frac{1}{NB}\sum_{b,i}|M_i(p_i)-p_i|$.
+
+\begin{table}[t]
+\centering\small
+\caption{Per-agent rule for each algorithm. The file name in \texttt{src/} is the
+legend key on the convergence plot.}
+\label{tab:rules}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\texttt{src/} file & per-agent rule & note \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Proper scoring rules --- differentiable, dense gradient}}\\
+\texttt{brier}      & $\ell_i=(b_i-y_i)^2$ & strictly proper, bounded \\
+\texttt{log}        & $\ell_i=-[\,y_i\log b_i+(1-y_i)\log(1-b_i)\,]$ & proper, unbounded \\
+\texttt{spherical}  & $\ell_i=-\dfrac{y_i b_i+(1-y_i)(1-b_i)}{\sqrt{b_i^2+(1-b_i)^2}}$ & proper, bounded \\
+\texttt{supervised} & $\ell_i=(b_i-p_i)^2$ & oracle ceiling (uses latent $p_i$) \\
+\addlinespace
+\multicolumn{3}{@{}l}{\emph{Counterfactual soft second-price auctions --- $\ell_i=\ell^{\mathrm{cf}}_i(s)$}}\\
+\texttt{cf\_second\_price}       & $s_i=\max_{j\ne i} b_j$ & bare peer price \\
+\texttt{cf\_reserve}             & $s_i=\max_{j\ne i} b_j$, replaced w.p.\ $\epsilon$ by $r\!\sim\!U(0,1)$ & random reserve \\
+\texttt{cf\_pop\_reserve}        & as \texttt{cf\_reserve}, $r$ drawn from shuffled pooled bids & reserve $\sim$ bid dist. \\
+\texttt{cf\_random\_price}       & $s_i\sim U(0,1)$ every round & $\equiv$ Brier in expectation \\
+\texttt{cf\_sleep}               & awake w.p.\ $1-\epsilon$; $s_i=\max$ over awake peers; asleep masked & stochastic participation \\
+\texttt{cf\_pairwise\_roundrobin}& $\ell_i=\frac{1}{N-1}\sum_{j\ne i}\ell^{\mathrm{cf}}_i(b_j)$ & dense; no starvation \\
+\addlinespace
+\multicolumn{3}{@{}l}{\emph{REINFORCE --- $\ell_i=-A_i\log\pi_i(b_i)$}}\\
+\texttt{pg\_winner\_only}     & $w\!=\!\arg\max b$; $r_w\!=\!y_w-s_w$; only $w$ updates; $A_w\!=\!r_w-\bar r_w$ & collapses (starvation) \\
+\texttt{pg\_losers\_zero}     & same $r$, but losers update at $r_i\!=\!0$; $A_i\!=\!r_i-\bar r_i$ & uninformative loser grad \\
+\texttt{pg\_first\_price}     & $w\!=\!\arg\max b$; $r_w\!=\!y_w-b_w$; only $w$ updates & pays own bid (improper) \\
+\texttt{pg\_rloo\_auction}    & $r_i$ = second-price reward; $A_i\!=\!r_i-\frac{1}{N-1}\sum_{j\ne i}r_j$ & symmetric, all update \\
+\texttt{pg\_rloo\_log}        & $r_i\!=\!y_i\log b_i+(1-y_i)\log(1-b_i)$; RLOO baseline & proper reward, no auction \\
+\texttt{pg\_regret\_surrogate}& winner $r_i\!=\!\mathbf{1}[p_i\!>\!s_i](y_i-p_i)+\mathbf{1}[p_i\!\le\!s_i](y_i-s_i)$; loser $r_i\!=\!\min(s_i-p_i,0)$ & correct-signed everywhere \\
+\addlinespace
+\multicolumn{3}{@{}l}{\emph{GRPO --- $\ell_i=-A_i\log\pi_i(b_i)$,\; $A_i=(r_i-\mathrm{mean}_j r_j)/(\mathrm{std}_j r_j+\varepsilon)$}}\\
+\texttt{grpo\_second\_price}  & $r_i$ = second-price reward & group-relative \\
+\texttt{grpo\_brier}          & $r_i=-(b_i-y_i)^2$ & proper reward + GRPO \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,48 @@
+# Faster budget for the overnight algorithm search (used by search_eval.py).
+# Same environment/agents as default.yaml, fewer steps so each candidate is cheap
+# to evaluate over multiple seeds. Keep the environment fields identical to
+# default.yaml so search results transfer to the full plot.
+
+seed: 0
+device: cpu
+
+env:
+  kind: uniform        # try also: correlated  (the winner's-curse regime where
+  n_agents: 5          #   the starvation / auction story is most interesting)
+  signal_std: 0.0
+  gamma: 2.0
+  eps_std: 0.5
+  a_std: 1.0
+
+agent:
+  hidden: [32, 32]
+  activation: tanh
+  output: sigmoid
+  init_bid: 0.5
+
+train:
+  steps: 1200          # reduced from 2000 for fast iteration
+  batch_size: 256
+  lr: 0.005
+  eval_every: 100
+  eval_batch: 8000     # reduced from 20000
+  tau0: 0.3
+  tau1: 0.03
+  sigma0: 0.7
+  sigma_min: 0.15
+  anneal: true
+  baseline_decay: 0.95
+  adv_clip: 3.0
+  eps_reserve: 0.2
+  eps_sleep: 0.5
+
+algorithms:
+  enabled: all
+  disabled: []
+
+plots:
+  enabled: all
+  disabled: []
+
+output:
+  dir: outputs

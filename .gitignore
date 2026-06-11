@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+outputs/
+.venv/
+.DS_Store
+config/_*.yaml
+logs/
+tex/*.aux
+tex/*.log
+tex/*.out
+tex/*.pdf
+tex/_*

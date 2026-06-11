@@ -1,0 +1,70 @@
+# =============================================================================
+# Confidence-calibration simulation config.
+#
+# This single file defines THE simulation (environment + agents + training
+# budget) that every algorithm runs against, plus which algorithms and plots are
+# active. Change something here and every algorithm's run + every plot updates
+# consistently. Algorithms in src/ and plots in plots/ are auto-discovered; the
+# `enabled`/`disabled` lists below decide which of them actually run.
+# =============================================================================
+
+seed: 0
+device: cpu
+
+# ---- the latent-probability environment (held constant across algorithms) ----
+env:
+  kind: uniform        # uniform | beta | correlated
+  n_agents: 5          # N agents = length of the probability vector p
+  signal_std: 0.0      # observation noise; 0 => each agent observes its own p
+  # beta / correlated parameters (used only for those kinds):
+  gamma: 2.0
+  eps_std: 0.5
+  a_std: 1.0
+
+# ---- the per-agent MLP (identical architecture for every agent) ----
+agent:
+  hidden: [32, 32]
+  activation: tanh     # relu | tanh
+  output: sigmoid      # sigmoid | clamp
+  init_bid: 0.5
+
+# ---- training budget + schedules (shared by every algorithm) ----
+train:
+  steps: 2000
+  batch_size: 256
+  lr: 0.005
+  eval_every: 50
+  eval_batch: 20000
+  # counterfactual soft-threshold temperature (annealed tau0 -> tau1)
+  tau0: 0.3
+  tau1: 0.03
+  # REINFORCE / GRPO exploration std (annealed sigma0 -> sigma_min)
+  sigma0: 0.7
+  sigma_min: 0.15
+  anneal: true
+  baseline_decay: 0.95
+  adv_clip: 3.0
+  eps_reserve: 0.2
+  eps_sleep: 0.5
+
+# ---- which algorithms to run -------------------------------------------------
+# `enabled: all` runs every file in src/. Replace with an explicit list to run a
+# subset, or keep `all` and list names under `disabled` to drop a few.
+algorithms:
+  enabled: all
+  disabled: []
+  # Example explicit subset (uncomment to use):
+  # enabled:
+  #   - supervised
+  #   - brier
+  #   - cf_pop_reserve
+  #   - pg_rloo_log
+  #   - pg_winner_only
+
+# ---- which plots to render ---------------------------------------------------
+plots:
+  enabled: all         # all files in plots/, or a list of plot names
+  disabled: []
+
+output:
+  dir: outputs
