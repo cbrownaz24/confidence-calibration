@@ -57,6 +57,47 @@ confidence-calibration/
 `sim/` is the part meant to stay constant. `src/` and `plots/` are where the repo
 grows.
 
+## Two environments: observed vs. hidden probability
+
+The repo ships two interchangeable environments. Algorithms in `src/` are written
+once and run against **either** — the only thing that changes is whether the
+probability is handed to the agent or must be inferred.
+
+| | `default.yaml` (observed) | `hidden.yaml` (hidden) |
+|---|---|---|
+| env kind | `uniform`/`beta`/`correlated` | `hidden_features` |
+| what the agent sees | its own scalar value `z` (`z = p`) | a shared question feature `x ∈ ℝᵈ` |
+| where `p` comes from | drawn directly | hidden `c_i(x) = σ(gain·f_i(x) + skill_i)`, `f_i` a frozen random teacher net |
+| confidence is… | a relabeling of an observed input (trivial) | **inferred from binary `y` feedback alone** |
+| generalization | — | calibration is measured on *held-out* questions |
+
+```bash
+python plot_experiments.py --config config/hidden.yaml   # the hidden-probability sim
+```
+
+In the hidden environment each round draws one shared question feature `x`, shown
+to all agents; agent `i` has its own frozen teacher `f_i` (its unknown skill) so
+its hidden correctness is `c_i(x) = σ(gain·f_i(x) + skill_i)`. The agent never
+sees `c_i` — only the binary outcome `y_i ~ Bernoulli(c_i(x))` — and must recover
+a meaningful confidence from the structure of `x`. Because the teacher is smooth,
+one binary sample per question already carries signal (no need to resample a
+question). We still know the true `c_i(x)`, so two complementary failure modes can
+be separated on held-out questions:
+
+* **wrong vs. right** — `MAE` of the report against the true `c_i(x)`
+  (`convergence_mae.png`), and
+* **miscalibrated vs. calibrated** — `ECE` and reliability diagrams against the
+  binary outcomes (`ece_convergence.png`, `reliability.png`).
+
+Train past the MAE plateau and watch ECE drift up — the small-scale version of
+the overconfidence-of-overtrained-networks effect (Guo et al. 2017). The teacher
+richness, capacity (`agent.hidden`), dataset size (`train.batch_size`/`steps`),
+and label noise are the knobs. The scoring-rule ablation (log vs. Brier vs.
+spherical) — "how does the scoring rule shape calibration?" — is built into the
+default `hidden.yaml` algorithm list. Hidden-mode knobs live under `env:` in
+`config/hidden.yaml`: `feature_dim`, `teacher_kind` (`mlp`|`linear`),
+`teacher_hidden`, `teacher_gain`, `teacher_seed`, `skill_spread`, `label_noise`.
+
 ## Adding an algorithm
 
 Create a file in `src/`. Subclass `Algorithm`, set `name`/`family`, and implement

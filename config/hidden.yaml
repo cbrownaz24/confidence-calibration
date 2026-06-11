@@ -1,0 +1,79 @@
+# =============================================================================
+# Hidden-probability simulation: confidence must be INFERRED, not observed.
+#
+# Same N-agent confidence-calibration game as default.yaml, but the latent
+# probability is never revealed. Each round draws one shared question feature
+# x in R^d; agent i's hidden correctness is c_i(x) = sigmoid(gain*f_i(x)+skill_i)
+# for a frozen random teacher f_i, and the agent observes only the binary outcome
+# y_i ~ Bernoulli(c_i(x)). To report a meaningful confidence the agent must infer
+# c_i from x and its binary feedback -- it never sees c_i.
+#
+#   python plot_experiments.py --config config/hidden.yaml
+#
+# Headline metrics: MAE-to-c on held-out questions (wrong vs right) AND ECE /
+# reliability against binary outcomes (miscalibrated vs calibrated). Train past
+# the MAE plateau and watch ECE drift up -- the overconfidence effect.
+# =============================================================================
+
+seed: 0
+device: cpu
+
+env:
+  kind: hidden_features
+  n_agents: 6
+  # ---- hidden-features knobs ----
+  feature_dim: 8           # d: dimension of the shared question feature x
+  teacher_kind: mlp        # mlp (rich, frozen random net) | linear (debug baseline)
+  teacher_hidden: [16, 16] # width of each agent's frozen teacher f_i
+  teacher_gain: 1.6        # logit scale of the teacher (bigger => sharper c(x))
+  teacher_seed: 12345      # fixes the hidden difficulty landscape across runs
+  skill_spread: 1.6        # per-agent skill bias spread (strong .. weak agents)
+  label_noise: 0.0         # eta: flip outcomes w.p. eta (shifts the Bayes target)
+
+# the per-agent MLP now ingests the d-dim feature x (input_dim = feature_dim,
+# wired automatically). A bit more capacity than the scalar setting since it must
+# represent c_i(.) over R^d rather than a 1-D map.
+agent:
+  hidden: [64, 64]
+  activation: relu
+  output: sigmoid
+  init_bid: 0.5
+
+train:
+  steps: 4000
+  batch_size: 512
+  lr: 0.002
+  eval_every: 50
+  eval_batch: 20000
+  # auction / exploration schedules (used by the cf_* and pg_*/grpo_* families)
+  tau0: 0.3
+  tau1: 0.03
+  sigma0: 0.7
+  sigma_min: 0.15
+  anneal: true
+  baseline_decay: 0.95
+  adv_clip: 3.0
+  eps_reserve: 0.2
+  eps_sleep: 0.5
+
+# A focused set: the scoring-rule ablation (log vs Brier vs spherical) is the
+# headline calibration comparison; supervised is the oracle ceiling that regresses
+# the hidden c(x) directly; one auction and one policy-gradient method are kept as
+# cross-family references. Switch to `enabled: all` to run the whole zoo.
+algorithms:
+  enabled:
+    - supervised
+    - brier
+    - log
+    - spherical
+    - cf_pop_reserve
+    - pg_rloo_log
+    - grpo_brier
+  disabled: []
+
+plots:
+  enabled: all            # convergence_mae + ece_convergence + reliability
+  disabled: []
+
+output:
+  dir: outputs/hidden
