@@ -1,0 +1,59 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+
+\title{Confidence Notes}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+We formalize calibration of model confidence as a truthful-elicitation problem. An agent reports a confidence on the correctness of its own answer, and we want the training reward to make reporting the true correctness probability optimal. Below we set up the LLM picture and a simplified simulation that targets this property.
+
+\section{LLM}
+Let $x \in \mathcal{X}$ be a prompt and let $i \in \{1, \ldots, N\}$ index distinct LLM agents, each with its own weights and behavior. For prompt $x$, agent $i$ produces an answer and a reported confidence:
+\[
+x \;\longmapsto\; \left\{ \begin{aligned} &\theta_i(x) \in \Theta \\ &c_i(x) \in [0,1] \end{aligned} \right.
+\]
+The agent's true probability of correctness on $x$ is
+\[
+\tilde{c}_i(x) \;:=\; \mathbb{P}\!\big(\theta_i(x) \text{ is correct} \,\big|\, x, i\big),
+\]
+and may differ across agents on the same prompt. Agent $i$ is \emph{calibrated} at $x$ if $c_i(x) = \tilde{c}_i(x)$. The training problem is to drive $c_i(\cdot) \to \tilde{c}_i(\cdot)$.
+
+\section{Simulation}
+Replace each LLM agent by a trainable model $M_i$. For each simulated prompt, sample a vector of private correctness probabilities
+\[
+(p_1, \ldots, p_N) \sim F, \qquad p_i \equiv \tilde{c}_i(x),
+\]
+and give each agent its own value $p_i$ in context. Agent $i$ reports
+\[
+c_i = M_i(p_i) \in [0,1].
+\]
+Correctness is then sampled independently:
+\[
+y_i \sim \mathrm{Bernoulli}(p_i), \qquad i = 1, \ldots, N.
+\]
+Each $M_i$ is trained by SGD to maximize an expected reward $\mathbb{E}[R_i]$ depending on its report $c_i$ and outcome $y_i$. The desired property at convergence is truthful reporting:
+\[
+M_i(p) \approx p \qquad \text{for all } p \in [0,1].
+\]
+
+\paragraph{Brier reward.} The quadratic reward
+\[
+R_i = -(y_i - c_i)^2
+\]
+has conditional expectation
+\[
+\mathbb{E}\!\big[(y_i - c_i)^2 \,\big|\, p_i\big] \;=\; p_i(1 - c_i)^2 + (1 - p_i)\,c_i^{\,2},
+\]
+uniquely minimized at $c_i = p_i$. Equivalently,
+\[
+\arg\min_{c \in [0,1]} \,\mathbb{E}\!\big[(y_i - c)^2 \,\big|\, p_i\big] \;=\; p_i,
+\]
+so truthful reporting is the unique best response and SGD on the Brier reward drives $M_i(p) \to p$.
+
+\paragraph{Comparing reward designs.} Brier is one choice among several rewards that make truthful reporting optimal. A central question of the simulation is to compare candidate reward designs by their rate of convergence to $c_i = p_i$, and to identify which drives the agent population to truthful reporting fastest.
+
+\end{document}
