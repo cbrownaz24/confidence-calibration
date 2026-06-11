@@ -23,12 +23,17 @@ from .config import AgentConfig
 
 
 class MLPAgent(nn.Module):
-    """M_i: observation z in [0,1] -> report b in [0,1]."""
+    """M_i: observation -> report b in [0,1].
 
-    def __init__(self, cfg: AgentConfig):
+    ``input_dim`` is 1 in the classic environment (the agent observes its own
+    scalar value) and ``d`` in the hidden-features environment (the agent observes
+    the shared question feature x in R^d and must infer its confidence from it).
+    """
+
+    def __init__(self, cfg: AgentConfig, input_dim: int = 1):
         super().__init__()
         act = nn.ReLU if cfg.activation == "relu" else nn.Tanh
-        dims = [1, *cfg.hidden]
+        dims = [input_dim, *cfg.hidden]
         layers = []
         for i in range(len(dims) - 1):
             layers += [nn.Linear(dims[i], dims[i + 1]), act()]
@@ -55,21 +60,36 @@ class MLPAgent(nn.Module):
 
 
 class AgentEnsemble(nn.Module):
-    """Holds N independent MLP agents and produces a [B, N] bid matrix."""
+    """Holds N independent MLP agents and produces a [B, N] bid matrix.
 
-    def __init__(self, n_agents: int, cfg: AgentConfig):
+    Two feeding modes, set by ``input_dim``:
+      * ``input_dim == 1`` (classic): agent ``i`` is fed its own column
+        ``z[:, i]`` -- each agent observes its private scalar value.
+      * ``input_dim > 1`` (hidden features): every agent is fed the *same*
+        shared question feature ``x`` of shape ``[B, input_dim]``. Agents differ
+        only in their learned map, so confidence must be inferred from x.
+    """
+
+    def __init__(self, n_agents: int, cfg: AgentConfig, input_dim: int = 1):
         super().__init__()
         self.n = n_agents
         self.cfg = cfg
-        self.agents = nn.ModuleList([MLPAgent(cfg) for _ in range(n_agents)])
+        self.input_dim = input_dim
+        self.shared_input = input_dim > 1
+        self.agents = nn.ModuleList(
+            [MLPAgent(cfg, input_dim) for _ in range(n_agents)])
+
+    def _feed(self, z: torch.Tensor, i: int) -> torch.Tensor:
+        """The slice of the observation handed to agent ``i``."""
+        return z if self.shared_input else z[:, i:i + 1]
 
     def bids(self, z: torch.Tensor) -> torch.Tensor:
-        """z: [B, N] -> [B, N] deterministic mean reports."""
-        cols = [self.agents[i](z[:, i:i + 1]) for i in range(self.n)]
+        """Observation -> [B, N] deterministic mean reports."""
+        cols = [self.agents[i](self._feed(z, i)) for i in range(self.n)]
         return torch.cat(cols, dim=1)
 
     def logits(self, z: torch.Tensor) -> torch.Tensor:
-        cols = [self.agents[i].logit(z[:, i:i + 1]) for i in range(self.n)]
+        cols = [self.agents[i].logit(self._feed(z, i)) for i in range(self.n)]
         return torch.cat(cols, dim=1)
 
     def stochastic_bids(self, z: torch.Tensor, sigma: float):
@@ -79,7 +99,7 @@ class AgentEnsemble(nn.Module):
         through the policy mean via ``logprob``. The clamp boundary correction is
         ignored (standard REINFORCE practice).
         """
-        mu = self.logits(z)                       # [B, N], carries grad
+        mu = self.logits(z)                       # [B, N], carries grad (shape via _feed)
         z_sample = (mu + torch.randn_like(mu) * sigma).detach()
         bids = torch.sigmoid(z_sample)
         logprob = (-0.5 * ((z_sample - mu) / sigma) ** 2

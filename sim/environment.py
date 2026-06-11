@@ -77,3 +77,21 @@ class Environment:
     def sample_y(self, p: torch.Tensor) -> torch.Tensor:
         u = torch.rand(p.shape, generator=self._gen)
         return (u < p).float()
+
+    # ------------------------------------------------------------- batch API
+    # A uniform (p, observation, y) interface shared with FeatureEnvironment so
+    # the training loop and the algorithms in ``src/`` are environment-agnostic.
+    # Here the observation is z (the agent's own value), preserving the original
+    # behaviour exactly.
+    def sample_batch(self, batch: int):
+        p = self.sample_p(batch)
+        z = self.observe(p)
+        y = self.sample_y(p)
+        return p, z, y
+
+    def eval_set(self, batch: int):
+        """Held-out eval triple (observation, true p, outcome), drawn once."""
+        p = self.sample_p(batch)
+        z = self.observe(p)
+        y = self.sample_y(p)
+        return z, p, y

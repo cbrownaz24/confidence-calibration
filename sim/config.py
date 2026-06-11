@@ -24,6 +24,13 @@ class EnvConfig:
       - "beta"       : p_i ~ Beta(alpha_i, beta_i), heterogeneous skill per agent.
       - "correlated" : shared difficulty q, p_i = sigmoid(a_i + gamma*z(q) + eps_i)
                        -- the affiliated-values regime (winner's-curse territory).
+      - "hidden_features" : the *probability is never revealed*. A shared question
+                       feature x in R^d is drawn each round; agent i's hidden
+                       correctness is c_i(x) = sigmoid(gain*f_i(x) + skill_i) where
+                       f_i is a frozen random teacher net, and only the binary
+                       outcome y_i ~ Bernoulli(c_i(x)) is observed. The agent must
+                       *infer* its confidence from binary feedback alone -- it
+                       never sees c_i. (See FeatureEnvironment.)
     """
 
     kind: str = "uniform"
@@ -38,6 +45,15 @@ class EnvConfig:
     a_std: float = 1.0
     # observation noise: z = clip(p + N(0, signal_std)).  0 => z == p (default).
     signal_std: float = 0.0
+
+    # ---- hidden_features parameters (used only by kind == "hidden_features") ----
+    feature_dim: int = 8          # dimension d of the question feature x in R^d
+    teacher_kind: str = "mlp"     # "mlp" (rich, frozen random net) | "linear"
+    teacher_hidden: tuple = (16, 16)   # hidden widths of each agent's teacher f_i
+    teacher_gain: float = 1.5     # logit scale; bigger => more confident teacher
+    teacher_seed: int = 12345     # seeds the frozen teachers (independent of agents)
+    skill_spread: float = 1.5     # per-agent skill bias spread (strong..weak agents)
+    label_noise: float = 0.0      # eta: outcome flipped w.p. eta (Bayes target shifts)
 
 
 @dataclass
@@ -110,7 +126,7 @@ def _coerce(dc_type, data: dict[str, Any]):
         val = data[f.name]
         if f.name in _NESTED and isinstance(val, dict):
             kwargs[f.name] = _coerce(_NESTED[f.name], val)
-        elif f.name == "hidden" and isinstance(val, list):
+        elif f.name in ("hidden", "teacher_hidden") and isinstance(val, list):
             kwargs[f.name] = tuple(val)
         else:
             kwargs[f.name] = val

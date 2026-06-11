@@ -34,7 +34,8 @@ import torch
 from .agents import AgentEnsemble
 from .config import ExperimentConfig
 from .environment import Environment
-from .metrics import mae_to_p, per_agent_mae
+from .feature_environment import FeatureEnvironment
+from .metrics import mae_to_p, per_agent_mae, ece, reliability_curve
 
 # --------------------------------------------------------------------------- #
 # Registry: every @register_algorithm subclass lands here, keyed by ``name``.
@@ -109,21 +110,24 @@ class Algorithm:
 
     # ----------------------------------------------------------------- loop
     def train(self, z_eval: torch.Tensor, p_eval: torch.Tensor,
-              verbose: bool = False) -> dict:
+              y_eval: torch.Tensor, verbose: bool = False) -> dict:
         t = self.cfg.train
-        iters, curve = [], []
+        iters, curve, ece_curve = [], [], []
         for step in range(t.steps + 1):
             if step % t.eval_every == 0 or step == t.steps:
                 iters.append(step)
                 curve.append(mae_to_p(self.ens, z_eval, p_eval))
+                # ECE tracked alongside MAE so overfitting past the early-stopping
+                # point shows up as ECE degrading while MAE/accuracy hold -- the
+                # classic miscalibration-of-overtrained-nets effect (Guo+ 2017).
+                ece_curve.append(ece(self.ens, z_eval, y_eval))
             if step == t.steps:
                 break
             tau, sigma = self._schedules(step)
             ctx = StepCtx(step, t.steps, tau, sigma,
                           t.eps_reserve, t.eps_sleep, self.gen)
-            p = self.env.sample_p(t.batch_size)
-            z = self.env.observe(p)
-            y = self.env.sample_y(p)
+            # the environment owns sampling; both env kinds return (p, obs, y).
+            p, z, y = self.env.sample_batch(t.batch_size)
             loss = self.compute_loss((p, z, y), ctx)
             for o in self.opts:
                 o.zero_grad(set_to_none=True)
@@ -137,10 +141,14 @@ class Algorithm:
             "iters": iters,
             "mae": curve,
             "final_mae": curve[-1],
+            "ece": ece_curve,
+            "final_ece": ece_curve[-1],
+            "reliability": reliability_curve(self.ens, z_eval, y_eval),
             "per_agent_mae": per_agent_mae(self.ens, z_eval, p_eval),
         }
         if verbose:
-            print(f"  {self.name:24s} final MAE={curve[-1]:.4f}", flush=True)
+            print(f"  {self.name:24s} final MAE={curve[-1]:.4f} "
+                  f"ECE={ece_curve[-1]:.4f}", flush=True)
         return result
 
 
@@ -152,8 +160,15 @@ def build_simulation(cfg: ExperimentConfig):
     simulation is held constant across all curves.
     """
     torch.manual_seed(cfg.seed)
-    env = Environment(cfg.env, seed=cfg.seed)
-    ens = AgentEnsemble(cfg.env.n_agents, cfg.agent)
+    if cfg.env.kind == "hidden_features":
+        # the probability is hidden behind a d-dim question feature; agents take
+        # the shared feature as input and must infer their confidence from it.
+        env = FeatureEnvironment(cfg.env, seed=cfg.seed)
+        ens = AgentEnsemble(cfg.env.n_agents, cfg.agent,
+                            input_dim=cfg.env.feature_dim)
+    else:
+        env = Environment(cfg.env, seed=cfg.seed)
+        ens = AgentEnsemble(cfg.env.n_agents, cfg.agent, input_dim=1)
     gen = torch.Generator().manual_seed(1000 + cfg.seed)
     return env, ens, gen
 
@@ -162,8 +177,9 @@ def run_algorithm(alg_cls: type[Algorithm], cfg: ExperimentConfig,
                   verbose: bool = False) -> dict:
     """Run one algorithm end-to-end against a constant simulation."""
     env, ens, gen = build_simulation(cfg)
-    # fixed held-out evaluation set (identical across algorithms).
-    p_eval = env.sample_p(cfg.train.eval_batch)
-    z_eval = env.observe(p_eval)
+    # fixed held-out evaluation set (identical across algorithms): the observation
+    # handed to the agents, the true hidden target p, and a frozen outcome draw y
+    # used for the calibration (ECE / reliability) metrics.
+    z_eval, p_eval, y_eval = env.eval_set(cfg.train.eval_batch)
     alg = alg_cls(ens, env, cfg, gen)
-    return alg.train(z_eval, p_eval, verbose=verbose)
+    return alg.train(z_eval, p_eval, y_eval, verbose=verbose)
